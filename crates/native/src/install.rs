@@ -157,7 +157,8 @@ pub fn install_at(
         }
         #[cfg(target_os = "linux")]
         PackageKind::Deb | PackageKind::Rpm | PackageKind::ArchPkg | PackageKind::Flatpak => {
-            linux::install_package(kind, &file, job.stop, &mut *job.phase).map(|_| {
+            let id = app.bundle_id();
+            linux::install_package(kind, &file, release.version.as_ref().map(|v| (id.as_str(), v)), job.stop, &mut *job.phase).map(|_| {
                 if kind == PackageKind::Flatpak {
                     linux::retire_former_flatpak(app, existing);
                 }
@@ -926,9 +927,11 @@ fn cancelled(stop: &Stop) -> impl Fn() -> bool + '_ {
 pub(crate) mod linux {
     use std::ffi::{OsStr, OsString};
     use std::os::unix::fs::PermissionsExt;
+    use std::time::Duration;
 
     use artcraft_launcher_core::distro;
     use artcraft_launcher_core::protocol::CANCELLED;
+    use artcraft_launcher_core::version::{self, Version};
 
     use super::{
         CraftApp, INSTALLER, InstallSource, Installed, JobPhase, PackageKind, Path, PathBuf, Paths, Record, SHARED_CALL, SYSTEM_BIN_DIRS, Stop,
@@ -1064,18 +1067,32 @@ pub(crate) mod linux {
         kinds
     }
 
-    /// Installs (or upgrades) a downloaded package with the system's own tools.
-    pub fn install_package(kind: PackageKind, file: &Path, stop: &Stop, phase: &mut dyn FnMut(JobPhase)) -> Result<(), String> {
+    /// Installs (or upgrades) a downloaded package with the system's own tools. `bundle` is the app
+    /// id and version a Flatpak bundle holds.
+    pub fn install_package(
+        kind: PackageKind,
+        file: &Path,
+        bundle: Option<(&str, &Version)>,
+        stop: &Stop,
+        phase: &mut dyn FnMut(JobPhase),
+    ) -> Result<(), String> {
         if kind == PackageKind::Deb && system_tool("apt-get").is_none() {
             return Err("this system has no apt-get to install a Debian package with".into());
         }
         if kind == PackageKind::ArchPkg && system_tool("pacman").is_none() {
             return Err("this system has no pacman to install an Arch package with".into());
         }
-        install_package_via(&SYSTEM, kind, file, stop, phase)
+        install_package_via(&SYSTEM, kind, file, bundle, stop, phase)
     }
 
-    pub fn install_package_via(root: &Root<'_>, kind: PackageKind, file: &Path, stop: &Stop, phase: &mut dyn FnMut(JobPhase)) -> Result<(), String> {
+    pub fn install_package_via(
+        root: &Root<'_>,
+        kind: PackageKind,
+        file: &Path,
+        bundle: Option<(&str, &Version)>,
+        stop: &Stop,
+        phase: &mut dyn FnMut(JobPhase),
+    ) -> Result<(), String> {
         let f = file.as_os_str();
         if let Some(command) = install_command(kind) {
             return as_root(root, command, f, stop, phase, JobPhase::Installing);
@@ -1104,10 +1121,47 @@ pub(crate) mod linux {
                         }
                     }
                 };
-                root.queue.alone(&cancelled(stop), &mut turn(phase, JobPhase::Installing), install_one).unwrap_or(Err(CANCELLED.into()))
+                // Inside the queue: an uninstall racing another bundle install can drop its remote (#326).
+                let install = || {
+                    let result = install_one();
+                    match bundle {
+                        Some((id, version)) if result.is_err() && reinstall_by_hand(id, version) => {
+                            log::info!("{id} {version} is already installed and this Flatpak can't reinstall a bundle: uninstalling it first");
+                            if !process::flatpak_command()
+                                .args(["uninstall", "--user", "-y", "--noninteractive", id])
+                                .status()
+                                .is_ok_and(|s| s.success())
+                            {
+                                log::warn!("couldn't uninstall {id} to install its bundle again");
+                                return result;
+                            }
+                            install_one()
+                        }
+                        _ => result,
+                    }
+                };
+                root.queue.alone(&cancelled(stop), &mut turn(phase, JobPhase::Installing), install).unwrap_or(Err(CANCELLED.into()))
             }
             other => Err(format!("{} isn't a system package", other.label())),
         }
+    }
+
+    /// Whether the user's copy of `id` has to be uninstalled before its bundle installs again: Flatpak
+    /// before 1.16.2 ignores `--reinstall` for a bundle and refuses the version that is installed.
+    fn reinstall_by_hand(id: &str, version: &Version) -> bool {
+        let t = Duration::from_secs(10);
+        process::capture_flatpak(&["--version"], t).is_some_and(|v| ignores_bundle_reinstall(&v))
+            && process::capture_flatpak(&["info", "--user", id], t)
+                .as_deref()
+                .and_then(crate::packages::parse_flatpak_info)
+                .and_then(|v| version::parse_package(&v))
+                .is_some_and(|v| v == *version)
+    }
+
+    /// Whether `flatpak --version` names a Flatpak that ignores `--reinstall` for a bundle (flatpak
+    /// commit 4c5693b8 added it in 1.16.2).
+    pub(crate) fn ignores_bundle_reinstall(flatpak_version: &str) -> bool {
+        flatpak_version.split_whitespace().last().and_then(version::parse).is_some_and(|v| v < Version::new(1, 16, 2))
     }
 
     pub fn remove_package(app: &CraftApp, installed: &Installed, stop: &Stop, phase: &mut dyn FnMut(JobPhase)) -> Result<(), String> {
@@ -2722,7 +2776,7 @@ mod tests {
                             waiting.send(()).unwrap();
                         }
                     };
-                    linux::install_package_via(root, PackageKind::Deb, Path::new(file), &Stop::default(), &mut phase)
+                    linux::install_package_via(root, PackageKind::Deb, Path::new(file), None, &Stop::default(), &mut phase)
                 })
             });
             waits.recv().unwrap();
@@ -2765,10 +2819,22 @@ mod tests {
         }
         let queue = crate::queue::Queue::new();
         let root = linux::Root { queue: &queue, run: &|_| Ok(()) };
-        let result = linux::install_package_via(&root, PackageKind::Flatpak, Path::new("/nonexistent/file.flatpak"), &Stop::default(), &mut |_| ());
+        let result =
+            linux::install_package_via(&root, PackageKind::Flatpak, Path::new("/nonexistent/file.flatpak"), None, &Stop::default(), &mut |_| ());
         assert!(result.is_err());
         let err = result.unwrap_err();
         assert!(err.starts_with("Flatpak couldn't install the bundle: "), "unexpected error: {err}");
+    }
+
+    #[cfg(target_os = "linux")]
+    #[test]
+    fn only_a_flatpak_before_1_16_2_needs_a_bundle_reinstalled_by_hand() {
+        assert!(linux::ignores_bundle_reinstall("Flatpak 1.14.6\n"));
+        assert!(linux::ignores_bundle_reinstall("Flatpak 1.16.1"));
+        assert!(!linux::ignores_bundle_reinstall("Flatpak 1.16.2"));
+        assert!(!linux::ignores_bundle_reinstall("Flatpak 1.18.4"));
+        // An unreadable version leaves the failed install as it is.
+        assert!(!linux::ignores_bundle_reinstall(""));
     }
 
     #[cfg(target_os = "linux")]
