@@ -171,31 +171,29 @@ enum WindowButton {
 }
 
 /// Minimize, maximize (or restore) and close, `height` tall, for a right-to-left layout: close
-/// ends up at the right. They take their room in the header but are drawn in a layer above the
-/// dialogs, the details drawer and the lightbox, as a system title bar is, so a click on them is
-/// not spent closing one of those first (#853).
+/// ends up at the right. Under a dialog egui ignores the header, so there they are drawn in a
+/// layer above the dialog's backdrop, as a system title bar is: the first click on Close closes
+/// the window, not the dialog (#853). The details drawer and the lightbox still cover them, since
+/// their own controls and the apps' menus can sit in that corner.
 pub fn window_buttons(ui: &mut Ui, height: f32) {
     let ctx = ui.ctx().clone();
     let maximized = ctx.input(|i| i.viewport().maximized.unwrap_or(false));
     let (rect, _) = ui.allocate_exact_size(vec2(3.0 * CAPTION_W, height), Sense::hover());
-    let area = egui::Area::new(egui::Id::unique("window-buttons")).order(egui::Order::Tooltip).fixed_pos(rect.min);
-    // The lightbox is a tooltip-order layer too, opened later.
-    ctx.move_to_top(area.layer());
-    area.show(&ctx, |ui| {
-        // Left to right: a right-to-left layout would widen the area over the header.
-        ui.horizontal(|ui| {
-            ui.spacing_mut().item_spacing.x = 0.0;
-            if window_button(ui, WindowButton::Minimize, height).clicked() {
-                ctx.send_viewport_cmd(egui::ViewportCommand::Minimized(true));
-            }
-            let size = if maximized { WindowButton::Restore } else { WindowButton::Maximize };
-            if window_button(ui, size, height).clicked() {
-                ctx.send_viewport_cmd(egui::ViewportCommand::Maximized(!maximized));
-            }
-            if window_button(ui, WindowButton::Close, height).clicked() {
-                ctx.send_viewport_cmd(egui::ViewportCommand::Close);
-            }
-        });
+    let mut row = egui::UiBuilder::new().max_rect(rect).layout(egui::Layout::left_to_right(egui::Align::Center));
+    if !ctx.memory(|m| m.is_above_modal_layer(ui.layer_id())) {
+        row = row.layer_id(egui::LayerId::new(egui::Order::Tooltip, egui::Id::unique("window-buttons")));
+    }
+    ui.scope_builder(row, |ui| {
+        if window_button(ui, WindowButton::Minimize, height).clicked() {
+            ctx.send_viewport_cmd(egui::ViewportCommand::Minimized(true));
+        }
+        let size = if maximized { WindowButton::Restore } else { WindowButton::Maximize };
+        if window_button(ui, size, height).clicked() {
+            ctx.send_viewport_cmd(egui::ViewportCommand::Maximized(!maximized));
+        }
+        if window_button(ui, WindowButton::Close, height).clicked() {
+            ctx.send_viewport_cmd(egui::ViewportCommand::Close);
+        }
     });
     rule(ui, height);
 }
