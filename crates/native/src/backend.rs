@@ -407,7 +407,8 @@ impl NativeBackend {
         let stop = Arc::new(Stop::default());
         {
             let mut jobs = self.shared.jobs.lock().unwrap_or_else(PoisonError::into_inner);
-            if jobs.contains_key(&id) {
+            // Also while an update that finished waits for the restart (#935).
+            if jobs.contains_key(&id) || self.shared.restarting.load(Ordering::SeqCst) {
                 return;
             }
             jobs.insert(id.clone(), stop.clone());
@@ -416,7 +417,7 @@ impl NativeBackend {
         let (shared, paths, http) = (self.shared.clone(), self.paths.clone(), self.http.clone());
         std::thread::spawn(move || {
             let job = job;
-            let mut last_emit = Instant::now() - Duration::from_secs(1);
+            let mut last_emit = Instant::now().checked_sub(Duration::from_secs(1)).unwrap_or_else(Instant::now);
             let mut phase = |p: JobPhase| {
                 if matches!(p, JobPhase::Downloading { done, total } if done != total && done != 0) && last_emit.elapsed() < Duration::from_millis(50)
                 {
@@ -563,7 +564,7 @@ fn run_install(
         shared.emit(Event::Occupied { app: app.id.to_string(), path: path.display().to_string() });
         return Err(format!("{} already exists", path.display()));
     }
-    let mut last_emit = Instant::now() - Duration::from_secs(1);
+    let mut last_emit = Instant::now().checked_sub(Duration::from_secs(1)).unwrap_or_else(Instant::now);
     let mut phase = |p: JobPhase| {
         // Downloads report thousands of times; the UI needs ~20 a second.
         if matches!(p, JobPhase::Downloading { done, total } if done != total && done != 0) && last_emit.elapsed() < Duration::from_millis(50) {
@@ -1940,6 +1941,27 @@ mod tests {
         let restarting = AtomicBool::new(false);
         assert_eq!(claim_restart(&jobs, &restarting, &stop, RESTART_WAIT, &mut || panic!("it never waits")), Ok(()));
         assert!(restarting.load(Ordering::SeqCst));
+    }
+
+    #[test]
+    fn no_second_launcher_update_starts_while_the_first_restarts() {
+        let dir = tempfile::tempdir().unwrap();
+        let (woke, wakes) = mpsc::channel();
+        let mut shared = shared();
+        shared.waker = Arc::new(move || {
+            let _ = woke.send(());
+        });
+        shared.self_install.set(Some(crate::self_update::Install::AppImage(dir.path().join("launcher.AppImage")))).unwrap();
+        *shared.launcher_release.lock().unwrap() = Some(release("0.6.0"));
+        // The first update has finished and the helper waits for this process to exit (#935).
+        shared.restarting.store(true, Ordering::SeqCst);
+        let platform = Platform { os: Os::Linux, arch: Arch::X64 };
+        let backend = NativeBackend { shared: Arc::new(shared), paths: Paths::under(dir.path()), http: None, source: None, platform: Some(platform) };
+        backend.update_launcher();
+        // A second update would start, fail here for lack of HTTP, and report it.
+        assert!(wakes.recv_timeout(Duration::from_millis(500)).is_err(), "{:?}", backend.shared.events.lock().unwrap());
+        assert!(backend.shared.jobs.lock().unwrap().is_empty());
+        assert!(backend.shared.restarting.load(Ordering::SeqCst), "the pending restart keeps new jobs out");
     }
 
     #[test]
