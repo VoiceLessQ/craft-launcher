@@ -158,7 +158,7 @@ pub fn install_at(
         #[cfg(target_os = "linux")]
         PackageKind::Deb | PackageKind::Rpm | PackageKind::ArchPkg | PackageKind::Flatpak => {
             let id = app.bundle_id();
-            linux::install_package(kind, &file, release.version.as_ref().map(|v| (id.as_str(), v)), job.stop, &mut *job.phase).map(|_| {
+            linux::install_package(kind, &file, Some(&id), job.stop, &mut *job.phase).map(|_| {
                 if kind == PackageKind::Flatpak {
                     linux::retire_former_flatpak(app, existing);
                 }
@@ -1068,14 +1068,8 @@ pub(crate) mod linux {
     }
 
     /// Installs (or upgrades) a downloaded package with the system's own tools. `bundle` is the app
-    /// id and version a Flatpak bundle holds.
-    pub fn install_package(
-        kind: PackageKind,
-        file: &Path,
-        bundle: Option<(&str, &Version)>,
-        stop: &Stop,
-        phase: &mut dyn FnMut(JobPhase),
-    ) -> Result<(), String> {
+    /// id a Flatpak bundle holds.
+    pub fn install_package(kind: PackageKind, file: &Path, bundle: Option<&str>, stop: &Stop, phase: &mut dyn FnMut(JobPhase)) -> Result<(), String> {
         if kind == PackageKind::Deb && system_tool("apt-get").is_none() {
             return Err("this system has no apt-get to install a Debian package with".into());
         }
@@ -1089,7 +1083,7 @@ pub(crate) mod linux {
         root: &Root<'_>,
         kind: PackageKind,
         file: &Path,
-        bundle: Option<(&str, &Version)>,
+        bundle: Option<&str>,
         stop: &Stop,
         phase: &mut dyn FnMut(JobPhase),
     ) -> Result<(), String> {
@@ -1101,7 +1095,8 @@ pub(crate) mod linux {
             PackageKind::Flatpak => {
                 let install_one = || {
                     log::info!("executing flatpak install --reinstall --bundle for {}", file.display());
-                    let output = process::flatpak_command()
+                    // The C locale keeps the "already installed" error below readable.
+                    let output = process::flatpak_command_c()
                         .args(["install", "--user", "-y", "--noninteractive", "--reinstall", "--bundle"])
                         .arg(f)
                         .output()
@@ -1125,8 +1120,8 @@ pub(crate) mod linux {
                 let install = || {
                     let result = install_one();
                     match bundle {
-                        Some((id, version)) if result.is_err() && reinstall_by_hand(id, version) => {
-                            log::info!("{id} {version} is already installed and this Flatpak can't reinstall a bundle: uninstalling it first");
+                        Some(id) if result.as_ref().is_err_and(|e| already_installed(e, id)) && reinstall_by_hand() => {
+                            log::info!("{id} is already installed and this Flatpak can't reinstall a bundle: uninstalling it first");
                             if !process::flatpak_command()
                                 .args(["uninstall", "--user", "-y", "--noninteractive", id])
                                 .status()
@@ -1146,16 +1141,17 @@ pub(crate) mod linux {
         }
     }
 
-    /// Whether the user's copy of `id` has to be uninstalled before its bundle installs again: Flatpak
-    /// before 1.16.2 ignores `--reinstall` for a bundle and refuses the version that is installed.
-    fn reinstall_by_hand(id: &str, version: &Version) -> bool {
-        let t = Duration::from_secs(10);
-        process::capture_flatpak(&["--version"], t).is_some_and(|v| ignores_bundle_reinstall(&v))
-            && process::capture_flatpak(&["info", "--user", id], t)
-                .as_deref()
-                .and_then(crate::packages::parse_flatpak_info)
-                .and_then(|v| version::parse_package(&v))
-                .is_some_and(|v| v == *version)
+    /// Whether a bundle install of `id` failed because the user's installation already has the
+    /// bundle's commit: Flatpak's "already installed", in the C locale `install_one` runs it in.
+    /// Any other failure leaves the installed copy alone.
+    pub(crate) fn already_installed(err: &str, id: &str) -> bool {
+        err.contains(&format!("{id} already installed"))
+    }
+
+    /// Whether the user's copy has to be uninstalled before its bundle installs again: Flatpak
+    /// before 1.16.2 ignores `--reinstall` for a bundle.
+    fn reinstall_by_hand() -> bool {
+        process::capture_flatpak(&["--version"], Duration::from_secs(10)).is_some_and(|v| ignores_bundle_reinstall(&v))
     }
 
     /// Whether `flatpak --version` names a Flatpak that ignores `--reinstall` for a bundle (flatpak
@@ -2824,6 +2820,18 @@ mod tests {
         assert!(result.is_err());
         let err = result.unwrap_err();
         assert!(err.starts_with("Flatpak couldn't install the bundle: "), "unexpected error: {err}");
+    }
+
+    #[cfg(target_os = "linux")]
+    #[test]
+    fn only_flatpaks_already_installed_error_reinstalls_a_bundle_by_hand() {
+        let id = "ai.storyteller.soundcraft";
+        let failed = |why: &str| format!("Flatpak couldn't install the bundle: Failed to install bundle {id}: {why}");
+        assert!(linux::already_installed(&failed("ai.storyteller.soundcraft already installed"), id));
+        // A bundle Flatpak can't use, or one for another app, keeps the installed copy.
+        assert!(!linux::already_installed(&failed("Can't change remote during bundle install"), id));
+        assert!(!linux::already_installed(&failed("Invalid checksum of length 0 expected 32"), id));
+        assert!(!linux::already_installed(&failed("ai.storyteller.photocraft already installed"), id));
     }
 
     #[cfg(target_os = "linux")]
