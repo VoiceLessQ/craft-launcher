@@ -417,13 +417,14 @@ impl NativeBackend {
         let (shared, paths, http) = (self.shared.clone(), self.paths.clone(), self.http.clone());
         std::thread::spawn(move || {
             let job = job;
-            let mut last_emit = Instant::now().checked_sub(Duration::from_secs(1)).unwrap_or_else(Instant::now);
+            let mut last_emit: Option<Instant> = None;
             let mut phase = |p: JobPhase| {
-                if matches!(p, JobPhase::Downloading { done, total } if done != total && done != 0) && last_emit.elapsed() < Duration::from_millis(50)
+                if matches!(p, JobPhase::Downloading { done, total } if done != total && done != 0)
+                    && last_emit.is_some_and(|t| t.elapsed() < Duration::from_millis(50))
                 {
                     return;
                 }
-                last_emit = Instant::now();
+                last_emit = Some(Instant::now());
                 shared.emit(Event::Progress { app: LAUNCHER_ID.to_string(), phase: p });
             };
             let last = || {
@@ -564,13 +565,15 @@ fn run_install(
         shared.emit(Event::Occupied { app: app.id.to_string(), path: path.display().to_string() });
         return Err(format!("{} already exists", path.display()));
     }
-    let mut last_emit = Instant::now().checked_sub(Duration::from_secs(1)).unwrap_or_else(Instant::now);
+    let mut last_emit: Option<Instant> = None;
     let mut phase = |p: JobPhase| {
         // Downloads report thousands of times; the UI needs ~20 a second.
-        if matches!(p, JobPhase::Downloading { done, total } if done != total && done != 0) && last_emit.elapsed() < Duration::from_millis(50) {
+        if matches!(p, JobPhase::Downloading { done, total } if done != total && done != 0)
+            && last_emit.is_some_and(|t| t.elapsed() < Duration::from_millis(50))
+        {
             return;
         }
-        last_emit = Instant::now();
+        last_emit = Some(Instant::now());
         shared.emit(Event::Progress { app: app.id.to_string(), phase: p });
     };
     let mut job = Job { http, paths, stop, phase: &mut phase, install_locations: &options.install_locations, replace, downgrade };
