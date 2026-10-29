@@ -39,6 +39,12 @@ fn ago_text(secs: i64, now: i64) -> String {
     }
 }
 
+/// `long` when its button fits `width`, else `short`: a wider button would push the `⋯` menu
+/// beside it out of the row (#956). The row shows the version, so `short` can leave it out.
+fn fitted<'a>(ui: &Ui, long: &'a str, short: &'a str, width: f32) -> &'a str {
+    if widgets::button_width(ui, long, 0.0) <= width { long } else { short }
+}
+
 /// Translate an absolute date ("Oct 8, 2026" → "8 окт. 2026") into the current language, on this
 /// computer's calendar (`local_time`). Every date the launcher shows is written by this.
 pub(crate) fn date_text(secs: i64) -> String {
@@ -50,8 +56,9 @@ pub(crate) fn date_text(secs: i64) -> String {
 /// What the main button of an app does.
 enum Primary {
     Install,
-    /// The download is already here; only the install step is left. Carries the button's label.
-    Retry(String),
+    /// The download is already here; only the install step is left. Carries the button's label
+    /// and a shorter one for when it doesn't fit.
+    Retry(String, &'static str),
     Update(String),
     Open,
     Download(String),
@@ -816,9 +823,9 @@ impl LauncherUi {
             };
         }
         match status {
-            AppStatus::Available if entry.ready => Primary::Retry(tl!("Retry install").into()),
+            AppStatus::Available if entry.ready => Primary::Retry(tl!("Retry install").into(), tl!("Retry install")),
             AppStatus::UpdateAvailable if entry.ready => {
-                Primary::Retry(fmt(tl!("Retry update to {version}"), &[("version", &entry.latest_label().unwrap_or_default())]))
+                Primary::Retry(fmt(tl!("Retry update to {version}"), &[("version", &entry.latest_label().unwrap_or_default())]), tl!("Retry update"))
             }
             AppStatus::Available => Primary::Install,
             AppStatus::UpdateAvailable => Primary::Update(entry.latest_label().unwrap_or_default()),
@@ -950,14 +957,15 @@ impl LauncherUi {
                     self.install_app(id);
                 }
             }
-            Primary::Retry(label) => {
+            Primary::Retry(label, short) => {
                 let tip = tl!("The download is still here. It's checked again, then installed.");
-                if widgets::button(ui, &label, Kind::Primary, main_w).on_hover_text(tip).clicked() {
+                if widgets::button(ui, fitted(ui, &label, short, main_w), Kind::Primary, main_w).on_hover_text(tip).clicked() {
                     self.install_app(id);
                 }
             }
             Primary::Update(v) => {
-                if widgets::button(ui, &fmt(tl!("Update to {v}"), &[("v", &v)]), Kind::Primary, main_w).clicked() {
+                let label = fmt(tl!("Update to {v}"), &[("v", &v)]);
+                if widgets::button(ui, fitted(ui, &label, tl!("Update"), main_w), Kind::Primary, main_w).clicked() {
                     self.install_app(id);
                 }
             }
