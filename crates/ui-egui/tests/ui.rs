@@ -2060,6 +2060,24 @@ fn custom_title_bar_has_window_buttons() {
     assert!(closes, "the close button asks the window to close (the shell decides whether that hides it to the tray)");
 }
 
+/// With a dialog open, one click on the custom title bar's Close closes the window: the caption
+/// buttons sit above the dialog's backdrop, as a system title bar does, so the click isn't spent
+/// dismissing the dialog first (#853). The header's own controls beside them still take clicks.
+#[test]
+fn close_button_closes_with_a_dialog_open() {
+    let (mut h, _) = harness_with_title_bar(events(), ViewMode::Grid, egui::Theme::Dark, true, 1.0, artcraft_launcher_ui_egui::TitleBar::Custom);
+    h.run_steps(6);
+    h.get_by_label("Settings").click();
+    h.run_steps(2);
+    h.get_by_label("Done");
+    h.get_by_label("Close").click();
+    h.step();
+    let closes = h.output().viewport_output.values().any(|v| v.commands.contains(&egui::ViewportCommand::Close));
+    assert!(closes, "the first click on Close closes the window");
+    h.run_steps(2);
+    h.get_by_label("Done");
+}
+
 /// Maximized, the window's top-right pixel is the screen's corner: there is no resize band there,
 /// so it belongs to the close button, as it does with Windows' own caption buttons (#374).
 #[test]

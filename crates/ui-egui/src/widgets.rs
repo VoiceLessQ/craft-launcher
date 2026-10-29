@@ -134,6 +134,8 @@ pub fn nav_icon(ui: &mut Ui, glyph: Glyph, tip: &str, height: f32, busy: bool) -
 /// How far in from the window's edges a custom title bar's window resizes ([`window_edges`]).
 /// The title bar's own controls leave this band alone.
 const RESIZE_EDGE: f32 = 5.0;
+/// Width of one caption button, as Windows' own.
+const CAPTION_W: f32 = 46.0;
 
 /// How wide the resize band along the window's edges is right now: nothing while the window is
 /// maximized or full screen, when `window_edges` offers no resizing and the edges are the screen's,
@@ -169,20 +171,32 @@ enum WindowButton {
 }
 
 /// Minimize, maximize (or restore) and close, `height` tall, for a right-to-left layout: close
-/// ends up at the right.
+/// ends up at the right. They take their room in the header but are drawn in a layer above the
+/// dialogs, the details drawer and the lightbox, as a system title bar is, so a click on them is
+/// not spent closing one of those first (#853).
 pub fn window_buttons(ui: &mut Ui, height: f32) {
     let ctx = ui.ctx().clone();
     let maximized = ctx.input(|i| i.viewport().maximized.unwrap_or(false));
-    if window_button(ui, WindowButton::Close, height).clicked() {
-        ctx.send_viewport_cmd(egui::ViewportCommand::Close);
-    }
-    let size = if maximized { WindowButton::Restore } else { WindowButton::Maximize };
-    if window_button(ui, size, height).clicked() {
-        ctx.send_viewport_cmd(egui::ViewportCommand::Maximized(!maximized));
-    }
-    if window_button(ui, WindowButton::Minimize, height).clicked() {
-        ctx.send_viewport_cmd(egui::ViewportCommand::Minimized(true));
-    }
+    let (rect, _) = ui.allocate_exact_size(vec2(3.0 * CAPTION_W, height), Sense::hover());
+    let area = egui::Area::new(egui::Id::unique("window-buttons")).order(egui::Order::Tooltip).fixed_pos(rect.min);
+    // The lightbox is a tooltip-order layer too, opened later.
+    ctx.move_to_top(area.layer());
+    area.show(&ctx, |ui| {
+        // Left to right: a right-to-left layout would widen the area over the header.
+        ui.horizontal(|ui| {
+            ui.spacing_mut().item_spacing.x = 0.0;
+            if window_button(ui, WindowButton::Minimize, height).clicked() {
+                ctx.send_viewport_cmd(egui::ViewportCommand::Minimized(true));
+            }
+            let size = if maximized { WindowButton::Restore } else { WindowButton::Maximize };
+            if window_button(ui, size, height).clicked() {
+                ctx.send_viewport_cmd(egui::ViewportCommand::Maximized(!maximized));
+            }
+            if window_button(ui, WindowButton::Close, height).clicked() {
+                ctx.send_viewport_cmd(egui::ViewportCommand::Close);
+            }
+        });
+    });
     rule(ui, height);
 }
 
@@ -192,7 +206,7 @@ pub fn window_buttons(ui: &mut Ui, height: f32) {
 /// corner.
 fn window_button(ui: &mut Ui, button: WindowButton, height: f32) -> Response {
     let t = Tokens::get(ui.ctx());
-    let (rect, _) = ui.allocate_exact_size(vec2(46.0, height), Sense::hover());
+    let (rect, _) = ui.allocate_exact_size(vec2(CAPTION_W, height), Sense::hover());
     // Clickable below the resize band along the top (and, for close, the right edge); maximized,
     // there is no band and the close button takes the screen's corner, as Windows' own does.
     let band = resize_band(ui.ctx());
