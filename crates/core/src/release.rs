@@ -318,7 +318,7 @@ pub fn valid_file_name(name: &str) -> bool {
 fn windows_device(name: &str) -> bool {
     let stem = name.split('.').next().unwrap_or_default().to_ascii_uppercase();
     matches!(stem.as_str(), "CON" | "PRN" | "AUX" | "NUL")
-        || (stem.len() == 4 && (stem.starts_with("COM") || stem.starts_with("LPT")) && stem.as_bytes()[3].is_ascii_digit())
+        || matches!(stem.as_bytes(), [b'C', b'O', b'M', b'1'..=b'9'] | [b'L', b'P', b'T', b'1'..=b'9'])
 }
 
 /// `s` cut to at most `max` bytes (on a char boundary) with an ellipsis, for text from a
@@ -557,7 +557,15 @@ mod tests {
         ] {
             assert!(!valid_file_name(bad), "{bad:?}");
         }
-        for good in ["photocraft-0.5.0-linux-x86_64.AppImage", "lightcraft_0.9.0_amd64.deb", "x-1.0+git.tar.gz", "console.zip", "COM10.txt"] {
+        for good in [
+            "photocraft-0.5.0-linux-x86_64.AppImage",
+            "lightcraft_0.9.0_amd64.deb",
+            "x-1.0+git.tar.gz",
+            "console.zip",
+            "COM10.txt",
+            "COM0.msi",
+            "lpt0",
+        ] {
             assert!(valid_file_name(good), "{good:?}");
         }
     }
