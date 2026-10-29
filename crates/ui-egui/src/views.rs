@@ -40,8 +40,8 @@ fn ago_text(secs: i64, now: i64) -> String {
 }
 
 /// `long`, or the first of `shorter` whose button fits `width` (the last one if none does): a
-/// wider button would push the `⋯` menu beside it out of the row (#956). The row shows the
-/// version, so the shorter labels can leave it out.
+/// wider button would push the `⋯` menu beside it out of the row (#956). The table's version
+/// column and the card's top strip show the version, so the shorter labels can leave it out.
 fn fitted<'a>(ui: &Ui, long: &'a str, shorter: &[&'a str], width: f32) -> &'a str {
     std::iter::once(long)
         .chain(shorter.iter().copied())
