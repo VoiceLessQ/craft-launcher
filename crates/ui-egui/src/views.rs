@@ -39,10 +39,15 @@ fn ago_text(secs: i64, now: i64) -> String {
     }
 }
 
-/// `long` when its button fits `width`, else `short`: a wider button would push the `⋯` menu
-/// beside it out of the row (#956). The row shows the version, so `short` can leave it out.
-fn fitted<'a>(ui: &Ui, long: &'a str, short: &'a str, width: f32) -> &'a str {
-    if widgets::button_width(ui, long, 0.0) <= width { long } else { short }
+/// `long`, or the first of `shorter` whose button fits `width` (the last one if none does): a
+/// wider button would push the `⋯` menu beside it out of the row (#956). The row shows the
+/// version, so the shorter labels can leave it out.
+fn fitted<'a>(ui: &Ui, long: &'a str, shorter: &[&'a str], width: f32) -> &'a str {
+    std::iter::once(long)
+        .chain(shorter.iter().copied())
+        .find(|label| widgets::button_width(ui, label, 0.0) <= width)
+        .or_else(|| shorter.last().copied())
+        .unwrap_or(long)
 }
 
 /// Translate an absolute date ("Oct 8, 2026" → "8 окт. 2026") into the current language, on this
@@ -57,8 +62,8 @@ pub(crate) fn date_text(secs: i64) -> String {
 enum Primary {
     Install,
     /// The download is already here; only the install step is left. Carries the button's label
-    /// and a shorter one for when it doesn't fit.
-    Retry(String, &'static str),
+    /// and shorter ones for when it doesn't fit.
+    Retry(String, Vec<&'static str>),
     Update(String),
     Open,
     Download(String),
@@ -823,10 +828,11 @@ impl LauncherUi {
             };
         }
         match status {
-            AppStatus::Available if entry.ready => Primary::Retry(tl!("Retry install").into(), tl!("Retry install")),
-            AppStatus::UpdateAvailable if entry.ready => {
-                Primary::Retry(fmt(tl!("Retry update to {version}"), &[("version", &entry.latest_label().unwrap_or_default())]), tl!("Retry update"))
-            }
+            AppStatus::Available if entry.ready => Primary::Retry(tl!("Retry install").into(), vec![tl!("Install")]),
+            AppStatus::UpdateAvailable if entry.ready => Primary::Retry(
+                fmt(tl!("Retry update to {version}"), &[("version", &entry.latest_label().unwrap_or_default())]),
+                vec![tl!("Retry update"), tl!("Update")],
+            ),
             AppStatus::Available => Primary::Install,
             AppStatus::UpdateAvailable => Primary::Update(entry.latest_label().unwrap_or_default()),
             AppStatus::UpToDate | AppStatus::Installed => Primary::Open,
@@ -957,15 +963,15 @@ impl LauncherUi {
                     self.install_app(id);
                 }
             }
-            Primary::Retry(label, short) => {
+            Primary::Retry(label, shorter) => {
                 let tip = tl!("The download is still here. It's checked again, then installed.");
-                if widgets::button(ui, fitted(ui, &label, short, main_w), Kind::Primary, main_w).on_hover_text(tip).clicked() {
+                if widgets::button(ui, fitted(ui, &label, &shorter, main_w), Kind::Primary, main_w).on_hover_text(tip).clicked() {
                     self.install_app(id);
                 }
             }
             Primary::Update(v) => {
                 let label = fmt(tl!("Update to {v}"), &[("v", &v)]);
-                if widgets::button(ui, fitted(ui, &label, tl!("Update"), main_w), Kind::Primary, main_w).clicked() {
+                if widgets::button(ui, fitted(ui, &label, &[tl!("Update")], main_w), Kind::Primary, main_w).clicked() {
                     self.install_app(id);
                 }
             }
