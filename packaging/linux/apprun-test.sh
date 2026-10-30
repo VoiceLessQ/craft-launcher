@@ -223,4 +223,11 @@ printf '[Desktop Entry]\nExec="/usr/bin/appimaged" wrap "%s" %%F\n' "$(readlink 
 "$APPDIR/AppRun" >/dev/null || fail "launch over an older release's entry beside appimaged failed"
 [[ ! -e "$DESKTOP" ]] || fail "older release's entry kept beside appimaged's"
 
+# 15e. A manager's entry hidden with a menu editor lists nothing: ours is installed and kept.
+for key in NoDisplay Hidden; do
+  printf '[Desktop Entry]\nExec="/usr/bin/appimaged" wrap "%s" %%F\n%s=true\n' "$(readlink -f "$APPIMAGE")" "$key" >"$apps/appimagekit_0123abcd.desktop"
+  "$APPDIR/AppRun" >/dev/null || fail "launch beside a hidden entry failed"
+  [[ -f "$DESKTOP" ]] || fail "no entry of ours beside a $key=true manager entry"
+done
+
 echo "AppRun desktop integration ok"
