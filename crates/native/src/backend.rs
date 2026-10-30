@@ -603,9 +603,14 @@ fn run_install(
 /// since then (an update, say), which reports its own end.
 fn start_failed(shared: Arc<Shared>, app: String) -> impl FnOnce(String) + Send + 'static {
     move |e| {
-        if !shared.jobs.lock().unwrap_or_else(PoisonError::into_inner).contains_key(&app) {
-            shared.emit(Event::JobFinished { app, result: Err(e) });
+        let jobs = shared.jobs.lock().unwrap_or_else(PoisonError::into_inner);
+        if jobs.contains_key(&app) {
+            return;
         }
+        // Queued under `jobs`, so a job starting now has its events land after this one.
+        shared.events.lock().unwrap_or_else(PoisonError::into_inner).push(Event::JobFinished { app, result: Err(e) });
+        drop(jobs);
+        (shared.waker)();
     }
 }
 
