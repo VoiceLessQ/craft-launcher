@@ -740,20 +740,23 @@ fn remove_appimage(app: &CraftApp, path: &Path, record: Option<&Record>) -> Resu
     Ok(())
 }
 
-/// Starts an installed app.
-pub fn launch(app: &CraftApp, installed: &Installed, paths: &Paths) -> Result<(), String> {
+/// How long an app has to keep running before an exit in error no longer counts as a failed start.
+const START_WINDOW: std::time::Duration = std::time::Duration::from_secs(10);
+
+/// Starts an installed app. `failed` gets the message when it quits in error right after starting.
+pub fn launch(app: &CraftApp, installed: &Installed, paths: &Paths, failed: impl FnOnce(String) + Send + 'static) -> Result<(), String> {
     let _ = paths;
     let path = Path::new(&installed.location);
-    match installed.source {
+    let cmd = match installed.source {
         InstallSource::Flatpak => {
             let mut cmd = process::flatpak_command();
             // The id detection found it under, which may be one of the app's older ones.
             cmd.args(["run", &installed.package.clone().unwrap_or_else(|| app.bundle_id())]);
-            process::spawn_detached(cmd)
+            Ok(cmd)
         }
-        InstallSource::MacApp => process::open(path.as_os_str()),
+        InstallSource::MacApp => process::opener(path.as_os_str()),
         // A tarball the launcher unpacked into its own folder: run it here, against its own
-        // home, rather than on the host through `flatpak-spawn` (which is what `launch_binary`
+        // home, rather than on the host through `flatpak-spawn` (which is what `binary_command`
         // would do inside the sandbox). Its settings then land beside it instead of in the
         // launcher's or the host's home folder.
         #[cfg(target_os = "linux")]
@@ -767,9 +770,9 @@ pub fn launch(app: &CraftApp, installed: &Installed, paths: &Paths) -> Result<()
             if let Some(dir) = path.parent() {
                 cmd.current_dir(dir);
             }
-            process::spawn_detached(cmd)
+            Ok(cmd)
         }
-        _ if cfg!(target_os = "macos") && path.extension().is_some_and(|e| e == "app") => process::open(path.as_os_str()),
+        _ if cfg!(target_os = "macos") && path.extension().is_some_and(|e| e == "app") => process::opener(path.as_os_str()),
         _ => {
             if !path.exists() {
                 if cfg!(windows) && installed.source == InstallSource::Msi && path.components().count() < 2 {
@@ -780,10 +783,21 @@ pub fn launch(app: &CraftApp, installed: &Installed, paths: &Paths) -> Result<()
                 }
                 return Err(format!("{} isn't where it was installed ({})", app.name, path.display()));
             }
-            process::launch_binary(path, &[])
+            Ok(process::binary_command(path, &[]))
         }
+    };
+    let (name, appimage) = (app.name, path.extension().is_some_and(|e| e.eq_ignore_ascii_case("AppImage")));
+    cmd.and_then(|cmd| process::spawn_watched(cmd, START_WINDOW, move |status| failed(start_failure(name, status, appimage))))
+        .map_err(|e| format!("Couldn't open {}: {e}", app.name))
+}
+
+/// What to tell the user when `name` quit in error right after it started.
+fn start_failure(name: &str, status: std::process::ExitStatus, appimage: bool) -> String {
+    let mut msg = format!("{name} quit right after starting ({status}).");
+    if appimage && process::fuse_missing() {
+        msg.push_str(" AppImages need FUSE to run, and it isn't set up on this system.");
     }
-    .map_err(|e| format!("Couldn't open {}: {e}", app.name))
+    msg
 }
 
 /// The environment a Craft App unpacked by the launcher runs with: its own `HOME` and the XDG

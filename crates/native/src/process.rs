@@ -108,10 +108,22 @@ fn read_all<R: std::io::Read + Send + 'static>(pipe: Option<R>) -> std::thread::
 }
 
 /// Starts `cmd` without waiting for it, and reaps it when it exits.
-pub fn spawn_detached(mut cmd: Command) -> Result<(), String> {
+pub fn spawn_detached(cmd: Command) -> Result<(), String> {
+    spawn_watched(cmd, Duration::ZERO, |_| {})
+}
+
+/// Starts `cmd` like [`spawn_detached`], and calls `failed` with its exit status when it exits in
+/// error within `window` of starting. An app that can't start would otherwise vanish unnoticed.
+pub fn spawn_watched(mut cmd: Command, window: Duration, failed: impl FnOnce(std::process::ExitStatus) + Send + 'static) -> Result<(), String> {
     let mut child = cmd.stdin(Stdio::null()).stdout(Stdio::null()).stderr(Stdio::null()).spawn().map_err(|e| format!("couldn't start it ({e})"))?;
+    let started = Instant::now();
     std::thread::spawn(move || {
-        let _ = child.wait();
+        if let Ok(status) = child.wait()
+            && !status.success()
+            && started.elapsed() < window
+        {
+            failed(status);
+        }
     });
     Ok(())
 }
@@ -295,8 +307,16 @@ fn which_on_path(name: &str) -> Option<std::path::PathBuf> {
     std::env::split_paths(&path).map(|d| d.join(name)).find(|p| p.is_file())
 }
 
-/// Starts an app binary from its own folder.
-pub fn launch_binary(exe: &Path, args: &[&str]) -> Result<(), String> {
+/// Whether an AppImage can't mount itself here: no `/dev/fuse`, or no `fusermount` to mount it
+/// with. Unknown, so `false`, inside the sandbox, which doesn't see the host's devices.
+pub fn fuse_missing() -> bool {
+    cfg!(target_os = "linux")
+        && !in_sandbox()
+        && (!Path::new("/dev/fuse").exists() || (which_on_path("fusermount3").is_none() && which_on_path("fusermount").is_none()))
+}
+
+/// The command that starts an app binary from its own folder.
+pub fn binary_command(exe: &Path, args: &[&str]) -> Command {
     let mut cmd = if in_sandbox() {
         let mut c = command("flatpak-spawn");
         c.arg("--host").arg(exe);
@@ -308,7 +328,7 @@ pub fn launch_binary(exe: &Path, args: &[&str]) -> Result<(), String> {
     if let Some(dir) = exe.parent() {
         cmd.current_dir(dir);
     }
-    spawn_detached(cmd)
+    cmd
 }
 
 /// Opens a file, folder or URL with the system's default handler.
@@ -318,7 +338,7 @@ pub fn open(target: &std::ffi::OsStr) -> Result<(), String> {
 
 /// The system's default opener for `target`: `explorer` on Windows, `open` on macOS, and
 /// `xdg-open` elsewhere (on the host, through `flatpak-spawn --host`, inside the sandbox).
-fn opener(target: &std::ffi::OsStr) -> Result<Command, String> {
+pub fn opener(target: &std::ffi::OsStr) -> Result<Command, String> {
     let mut cmd = if cfg!(target_os = "macos") {
         command("open")
     } else if cfg!(windows) {
@@ -576,6 +596,20 @@ mod run_tests {
         let err = run("yes", &[], Duration::from_millis(100)).unwrap_err();
         assert!(err.contains("didn't finish within"), "{err}");
         assert!(start.elapsed() < Duration::from_secs(5));
+    }
+
+    #[test]
+    fn only_a_failure_within_the_window_is_reported() {
+        let (sent, received) = std::sync::mpsc::channel();
+        for (script, window) in [("exit 3", Duration::from_secs(30)), ("exit 0", Duration::from_secs(30)), ("exit 5", Duration::ZERO)] {
+            let (program, args) = shell(script);
+            let mut cmd = command(program);
+            cmd.args(args);
+            let sent = sent.clone();
+            spawn_watched(cmd, window, move |status| sent.send(status.code()).unwrap()).unwrap();
+        }
+        drop(sent);
+        assert_eq!(received.iter().collect::<Vec<_>>(), [Some(3)]);
     }
 
     #[test]
