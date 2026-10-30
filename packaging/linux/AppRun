@@ -110,20 +110,28 @@ own_entry() {
   [ "$expected_body" = "$existing_body" ] || [ "$old_body" = "$existing_body" ]
 }
 
-# True when a visible entry in $1 other than ours has an Exec line that runs the AppImage $2.
+# True when a visible entry in $1 other than ours runs the AppImage $2 and has our window class.
 other_entry_runs() {
   grep -lF -e "$2" "$1"/*.desktop 2>/dev/null | (
     while IFS= read -r f; do
       [ "$f" = "$1/$DESK_ID.desktop" ] && continue
-      runs=false
+      main=false runs=false class=false
       while IFS= read -r line || [ -n "$line" ]; do
+        # Only the [Desktop Entry] group; an action's Exec isn't what the entry launches.
+        case "$line" in
+          "[Desktop Entry]") main=true && continue ;;
+          "["*) main=false ;;
+        esac
+        [ "$main" = true ] || continue
         case "$line" in
           # Menu editors hide an entry this way; it lists nothing.
           Hidden=true | NoDisplay=true) runs=false && break ;;
+          # A class from before an in-place update can't match the window, so ours has to stay.
+          "StartupWMClass=$DESK_ID") class=true ;;
           Exec=*"$2" | Exec=*"$2 "* | Exec=*"$2\""* | Exec=*"$2'"*) runs=true ;;
         esac
       done <"$f"
-      [ "$runs" = true ] && exit 0
+      [ "$runs" = true ] && [ "$class" = true ] && exit 0
     done
     exit 1
   )
