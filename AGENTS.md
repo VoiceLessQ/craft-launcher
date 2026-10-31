@@ -67,9 +67,9 @@ settings file must produce an error the user can act on, never a panic. Shared s
   `cargo xtask local`); keep it loopback-only and behind the `local-mirror` cargo feature, which
   release builds never enable.
 - Verify each download against the release's `SHA256SUMS.txt` before running or installing it.
-  Community apps get the same check. On macOS the launcher also requires a Developer ID signature
-  it can verify: an app without one (SolidCraft today, `installs_on_mac = false`) is not installed
-  there, only opened if present.
+  Community apps get the same check. On macOS the launcher also requires the Developer ID signature
+  of the app's own team (`CraftApp::mac_team`: ArtCraft's for official apps, SolidCraft's for
+  SolidCraft); an app with none (`mac_team = None`) is not installed there, only opened if present.
 - The details drawer's pictures are the one other download: JPEGs only, from a pinned tag of
   `https://raw.githubusercontent.com/storytold/craft-launcher-assets/` (`core::details`),
   capped at 2 MB each, cached, and never run. Pictures are not bundled in this repo.
@@ -193,3 +193,8 @@ Packaging facts the code relies on:
 - Keep every `Cargo.toml` valid at all times: the `crates/*` and `apps/*` globs mean one broken
   manifest breaks everyone's build. Write manifests to a temp file and `mv` them into place.
 - If someone else's in-progress edit breaks the build, wait and retry; don't fix their files.
+
+## CI workflows
+- Workflows in `.github/workflows/` call the shared workflows in [`storytold/craft-common-actions`](https://github.com/storytold/craft-common-actions) at `@main`, with their inputs and secrets. No other jobs: if no shared workflow does what's needed, it doesn't go here.
+- Don't add or change CI in a feature or fix PR. If the existing workflows can't build or test a change, link an existing craft-common-actions issue or PR, or open a new issue, or a PR only for a small fix that is safe for every app and does not increase CI time.
+- Some workflow files here still run their own jobs. Don't add to them. Moving a job into craft-common-actions is its own task, never part of another PR, and the job stays here until a shared workflow runs it.
