@@ -1847,13 +1847,18 @@ mod tests {
 
     #[test]
     fn a_failed_start_isnt_reported_over_a_job_started_since() {
-        let shared = Arc::new(shared());
+        let (sent, woke) = mpsc::channel();
+        let mut shared = shared();
+        shared.waker = Arc::new(move || sent.send(()).unwrap());
+        let shared = Arc::new(shared);
         shared.jobs.lock().unwrap().insert(APP.to_string(), Arc::new(Stop::default()));
         start_failed(shared.clone(), APP.to_string())("quit".into());
         assert!(shared.events.lock().unwrap().is_empty());
+        assert!(woke.try_recv().is_err());
         shared.jobs.lock().unwrap().clear();
         start_failed(shared.clone(), APP.to_string())("quit".into());
         assert_eq!(shared.events.lock().unwrap().len(), 1);
+        assert!(woke.try_recv().is_ok());
     }
 
     /// Puts the planned download on disk, as a failed install leaves it.
