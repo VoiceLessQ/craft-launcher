@@ -173,14 +173,17 @@ enum WindowButton {
 pub fn window_buttons(ui: &mut Ui, height: f32) {
     let ctx = ui.ctx().clone();
     let maximized = ctx.input(|i| i.viewport().maximized.unwrap_or(false));
-    if window_button(ui, WindowButton::Close, height).clicked() {
+    // The first frame after a restore hit-tests the maximized buttons, so an edge press can land on them.
+    let inside = ctx.content_rect().shrink(resize_band(&ctx));
+    let clicked = |resp: Response| resp.clicked() && resp.interact_pointer_pos().is_none_or(|p| inside.contains(p));
+    if clicked(window_button(ui, WindowButton::Close, height)) {
         ctx.send_viewport_cmd(egui::ViewportCommand::Close);
     }
     let size = if maximized { WindowButton::Restore } else { WindowButton::Maximize };
-    if window_button(ui, size, height).clicked() {
+    if clicked(window_button(ui, size, height)) {
         ctx.send_viewport_cmd(egui::ViewportCommand::Maximized(!maximized));
     }
-    if window_button(ui, WindowButton::Minimize, height).clicked() {
+    if clicked(window_button(ui, WindowButton::Minimize, height)) {
         ctx.send_viewport_cmd(egui::ViewportCommand::Minimized(true));
     }
     rule(ui, height);
