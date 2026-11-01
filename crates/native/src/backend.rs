@@ -438,8 +438,7 @@ impl NativeBackend {
                 Some(http) => crate::self_update::update(&install, &release, platform, http, &paths, &stop, &mut phase, &last),
                 None => Err("secure connections aren't available on this system".into()),
             };
-            drop(job);
-            report_self_update(&shared, result);
+            report_self_update(&shared, job, result);
         });
     }
 
@@ -626,14 +625,16 @@ fn landed(before: Option<&Installed>, after: Option<&Installed>, latest: &versio
     has_latest(after) && !has_latest(before)
 }
 
-/// Says how the launcher's own update ended. A failed one gives back the restart it claimed.
-fn report_self_update(shared: &Shared, result: Result<(), String>) {
+/// Says how the launcher's own update ended. A failed one gives back the restart it claimed
+/// before `job` ends, so it can't take a later update's claim with it.
+fn report_self_update(shared: &Shared, job: JobGuard, result: Result<(), String>) {
+    if result.is_err() {
+        shared.restarting.store(false, Ordering::SeqCst);
+    }
+    drop(job);
     match result {
         Ok(()) => shared.emit(Event::LauncherRestarting),
-        Err(e) => {
-            shared.restarting.store(false, Ordering::SeqCst);
-            shared.emit(Event::JobFinished { app: LAUNCHER_ID.to_string(), result: Err(e) });
-        }
+        Err(e) => shared.emit(Event::JobFinished { app: LAUNCHER_ID.to_string(), result: Err(e) }),
     }
 }
 
@@ -2015,13 +2016,19 @@ mod tests {
 
     #[test]
     fn a_failed_launcher_update_gives_back_the_restart_it_claimed() {
-        let shared = shared();
+        let shared = Arc::new(shared());
+        let job = || {
+            shared.jobs.lock().unwrap().insert(LAUNCHER_ID.to_string(), Arc::new(Stop::default()));
+            JobGuard { shared: shared.clone(), app_id: LAUNCHER_ID.to_string() }
+        };
         shared.restarting.store(true, Ordering::SeqCst);
-        report_self_update(&shared, Ok(()));
+        report_self_update(&shared, job(), Ok(()));
         assert!(shared.restarting.load(Ordering::SeqCst), "the helper waits for this process to exit");
+        assert!(shared.jobs.lock().unwrap().is_empty());
         // The swap or its helper can still fail after the claim.
-        report_self_update(&shared, Err("disk full".into()));
+        report_self_update(&shared, job(), Err("disk full".into()));
         assert!(!shared.restarting.load(Ordering::SeqCst));
+        assert!(shared.jobs.lock().unwrap().is_empty());
         let events = shared.events.lock().unwrap();
         assert!(matches!(&events[..], [Event::LauncherRestarting, Event::JobFinished { result: Err(_), .. }]), "{events:?}");
     }
