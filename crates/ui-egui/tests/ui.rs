@@ -2164,15 +2164,23 @@ fn a_press_on_the_window_edge_only_resizes() {
     let asked = press(&mut h, egui::pos2(x, 2.0));
     assert!(!asked.iter().any(|c| matches!(c, Asked::Close)), "after growing: {asked:?}");
     // The first frame after a restore has no edge areas to hit yet, only last frame's full buttons.
-    for label in ["Minimize", "Restore", "Close"] {
+    let press_on_restore = |h: &mut Harness<'_, Option<LauncherUi>>, label: &str, y: f32| -> Vec<Asked> {
         h.input_mut().viewports.entry(egui::ViewportId::ROOT).or_default().maximized = Some(true);
         h.run_steps(3);
         let x = h.get_by_label(label).rect().center().x;
         h.input_mut().viewports.entry(egui::ViewportId::ROOT).or_default().maximized = Some(false);
-        let asked = press(&mut h, egui::pos2(x, 2.0));
+        press(h, egui::pos2(x, y))
+    };
+    for label in ["Minimize", "Restore", "Close"] {
+        let asked = press_on_restore(&mut h, label, 4.5);
         assert!(!asked.iter().any(|c| matches!(c, Asked::Minimized(_) | Asked::Maximized(_) | Asked::Close)), "{label} after restoring: {asked:?}");
     }
+    // Just below the band, that frame's click is the button's.
+    let asked = press_on_restore(&mut h, "Minimize", 5.5);
+    assert!(asked.contains(&Asked::Minimized(true)), "below the band after restoring: {asked:?}");
     // A key press still works with the pointer resting on the band, and so does a click below it.
+    let x = h.get_by_label("Minimize").rect().center().x;
+    press(&mut h, egui::pos2(x, 4.5));
     h.get_by_label("Minimize").focus();
     h.run_steps(2);
     h.key_down(egui::Key::Enter);
@@ -2181,9 +2189,12 @@ fn a_press_on_the_window_edge_only_resizes() {
     assert!(asked.contains(&Asked::Minimized(true)), "by key: {asked:?}");
     h.key_up(egui::Key::Enter);
     h.step();
-    let button = h.get_by_label("Minimize").rect().center();
-    let asked = press(&mut h, button);
-    assert!(asked.contains(&Asked::Minimized(true)), "below the band: {asked:?}");
+    for (label, want) in [("Minimize", Asked::Minimized(true)), ("Maximize", Asked::Maximized(true)), ("Close", Asked::Close)] {
+        let x = h.get_by_label(label).rect().center().x;
+        let asked = press(&mut h, egui::pos2(x, 5.5));
+        assert!(asked.contains(&want), "{label} below the band: {asked:?}");
+        assert!(!asked.iter().any(|c| matches!(c, Asked::BeginResize(_))), "{label} below the band: {asked:?}");
+    }
     // A dialog's backdrop reaches the edges too; the press doesn't dismiss it.
     h.get_by_label("Settings").click();
     h.run_steps(4);
