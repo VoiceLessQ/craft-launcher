@@ -213,4 +213,33 @@ fn german_switches_persists_and_keeps_install_actions() {
             }
         }
     }
+    for language in &artcraft_launcher_ui_egui::i18n::LANGUAGES {
+        main_buttons_fit_the_narrowest_window(language.code);
+    }
+}
+
+/// At the launcher's narrowest, no main button outgrows its slot or crowds out the `⋯` menu (#956):
+/// a kept update, a kept install and a plain update, in both views, whichever label `language` has.
+fn main_buttons_fit_the_narrowest_window(language: &str) {
+    use artcraft_launcher_ui_egui::i18n::{fmt, t};
+    for view in [ViewMode::Table, ViewMode::Grid] {
+        let kept = ["photocraft", "vectorcraft"].map(|app| Event::ReadyToInstall { app: app.into(), ready: true });
+        let (mut h, _) = harness_language(view, egui::Theme::Dark, true, language, kept.into());
+        h.set_size(egui::vec2(720.0, 1600.0));
+        h.run_steps(8);
+        let slot = h.query_all_by_label(t("Install")).next().unwrap().rect().width();
+        for app in ["PhotoCraft", "VectorCraft", "EffectCraft"] {
+            let menu = h.get_by_label(&fmt(t("More actions for {name}"), &[("name", app)])).rect();
+            let main = h
+                .query_all_by_role(egui::accesskit::Role::Button)
+                .filter(|n| (n.rect().center().y - menu.center().y).abs() < 1.0 && n.rect().left() < menu.left())
+                .max_by(|a, b| a.rect().right().total_cmp(&b.rect().right()))
+                .unwrap()
+                .rect();
+            assert!(main.width() <= slot + 0.5, "{language} {view:?} {app}: {main:?} wider than Install ({slot})");
+            assert!(main.right() <= menu.left(), "{language} {view:?} {app}: {main:?} overlaps the menu {menu:?}");
+            // The table scrolls sideways, with a fixed slot; cards have to fit the window.
+            assert!(view == ViewMode::Table || menu.right() <= 720.0, "{language} {view:?} {app}: the menu left the window: {menu:?}");
+        }
+    }
 }
