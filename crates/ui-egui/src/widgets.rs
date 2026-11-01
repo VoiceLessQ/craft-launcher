@@ -180,18 +180,21 @@ pub fn window_buttons(ui: &mut Ui, height: f32) {
     let maximized = ctx.input(|i| i.viewport().maximized.unwrap_or(false));
     let (rect, _) = ui.allocate_exact_size(vec2(3.0 * CAPTION_W, height), Sense::hover());
     let mut row = egui::UiBuilder::new().max_rect(rect).layout(egui::Layout::left_to_right(egui::Align::Center));
+    let mut sense = Sense::click();
     if !ctx.memory(|m| m.is_above_modal_layer(ui.layer_id())) {
         row = row.layer_id(egui::LayerId::new(egui::Order::Tooltip, egui::Id::unique("window-buttons")));
+        // Pointer only: Tab stays in the dialog.
+        sense = Sense::CLICK;
     }
     ui.scope_builder(row, |ui| {
-        if window_button(ui, WindowButton::Minimize, height).clicked() {
+        if window_button(ui, WindowButton::Minimize, height, sense).clicked() {
             ctx.send_viewport_cmd(egui::ViewportCommand::Minimized(true));
         }
         let size = if maximized { WindowButton::Restore } else { WindowButton::Maximize };
-        if window_button(ui, size, height).clicked() {
+        if window_button(ui, size, height, sense).clicked() {
             ctx.send_viewport_cmd(egui::ViewportCommand::Maximized(!maximized));
         }
-        if window_button(ui, WindowButton::Close, height).clicked() {
+        if window_button(ui, WindowButton::Close, height, sense).clicked() {
             ctx.send_viewport_cmd(egui::ViewportCommand::Close);
         }
     });
@@ -202,7 +205,7 @@ pub fn window_buttons(ui: &mut Ui, height: f32) {
 /// command. Hit-testing excludes the top resize band (and, for close, the right-edge band) so
 /// the window edges stay resizable; when maximized there is no band and close reaches the
 /// corner.
-fn window_button(ui: &mut Ui, button: WindowButton, height: f32) -> Response {
+fn window_button(ui: &mut Ui, button: WindowButton, height: f32, sense: Sense) -> Response {
     let t = Tokens::get(ui.ctx());
     let (rect, _) = ui.allocate_exact_size(vec2(CAPTION_W, height), Sense::hover());
     // Clickable below the resize band along the top (and, for close, the right edge); maximized,
@@ -210,7 +213,7 @@ fn window_button(ui: &mut Ui, button: WindowButton, height: f32) -> Response {
     let band = resize_band(ui.ctx());
     let right = if button == WindowButton::Close { band } else { 0.0 };
     let hit = Rect::from_min_max(rect.min + vec2(0.0, band), rect.max - vec2(right, 0.0));
-    let resp = ui.interact(hit, ui.scope_id().with(("window-button", button as u8)), Sense::click());
+    let resp = ui.interact(hit, ui.scope_id().with(("window-button", button as u8)), sense);
     let (fill, ink) = match (button, resp.hovered()) {
         (WindowButton::Close, true) => (Color32::from_rgb(0xc4, 0x2b, 0x1c), Color32::WHITE),
         (_, true) => (t.line, t.ink_strong),
