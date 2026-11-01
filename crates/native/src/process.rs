@@ -628,6 +628,15 @@ mod run_tests {
     }
 
     #[test]
+    fn flatpak_output_the_launcher_reads_stays_in_english() {
+        if in_sandbox() {
+            return;
+        }
+        let cmd = flatpak_command_c();
+        assert!(cmd.get_envs().any(|(name, value)| name == "LC_ALL" && value == Some(std::ffi::OsStr::new("C"))));
+    }
+
+    #[test]
     fn a_silent_failure_and_a_success() {
         let (program, args) = shell("exit 4");
         let err = run(program, &args, Duration::from_secs(30)).unwrap_err();
