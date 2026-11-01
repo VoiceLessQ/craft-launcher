@@ -2,7 +2,7 @@
 
 ArtCraft Launcher installs, updates and launches the **Craft App Suite** (PhotoCraft, LightCraft,
 FilmCraft, DesignCraft, VectorCraft, PdfCraft, EffectCraft, WordCraft, DeckCraft, GridCraft,
-CADCraft, SoundCraft, FigCraft), plus approved **community apps** made outside ArtCraft and labelled
+CADCraft, SoundCraft, FigCraft, Craft Anything), plus approved **community apps** made outside ArtCraft and labelled
 as such (today SolidCraft, by Tangency Labs). It is written in **Rust only** (no JavaScript or TypeScript): the desktop
 app is native egui/eframe, and the web build is the same Rust compiled to WebAssembly (trunk +
 wasm-bindgen). **No Tauri, Electron or webview shells**, ever.
@@ -12,9 +12,6 @@ tray menu, notifications, installers, release names, docs prose. The suite is th
 Suite**. Machine names stay lowercase: crates and binaries (`artcraft-launcher`,
 `artcraft-launcher-*`), file names, and the app id `ai.storyteller.artcraft-launcher`. Note the
 GitHub repo is `storytold/craft-launcher`, while every file and package is `artcraft-launcher-*`.
-
-Standards and learnings shared across the Craft apps live in `../craftrules` (read its
-`README.md` and `AGENTS.md`). Contribute reusable learnings there, never code.
 
 ## 1. Workspace map
 
@@ -45,8 +42,7 @@ the apps opens windows, tray icons or notifications.
 ### Never crash (outranks feature work)
 
 A bad network response, a malformed release, a half-downloaded file, a full disk or a corrupt
-settings file must produce an error the user can act on, never a panic. Shared standard:
-`../craftrules/standards/never-crash.md`.
+settings file must produce an error the user can act on, never a panic.
 
 - **Non-test code never panics.** No `unwrap()`, `expect()`, `panic!`, `unreachable!`, `todo!` or
   `unimplemented!`. Return the crate's error type and propagate with `?`.
@@ -144,8 +140,7 @@ packaging/linux/AppRun` and `actionlint`.
 The version lives only in `[workspace.package] version` in the root `Cargo.toml`
 (`cargo xtask version`, `cargo xtask version set X.Y.Z[-pre]`). Pushing to the `release` branch runs
 `.github/workflows/release.yml`, which builds every platform and creates the draft GitHub Release
-**ArtCraft Launcher v<version>** with `SHA256SUMS.txt`. The canonical recipe is
-`../craftrules/release/playbook.md`; cutting a release is `../craftrules/release/cut-a-release.md`.
+**ArtCraft Launcher v<version>** with `SHA256SUMS.txt`.
 
 Release assets (keep these names exact; the launcher's own self-update and the README rely on them):
 
