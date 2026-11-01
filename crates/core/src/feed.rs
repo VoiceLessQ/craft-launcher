@@ -120,7 +120,8 @@ impl Feed {
             alerts: raw.important_notices.alerts.into_iter().filter_map(|n| n.into_notice("alert")).take(MAX_NOTICES).collect(),
             mirror: None,
         };
-        // App renames are news too: show them with the announcements.
+        // App renames are news too: show them with the announcements, inside the cap.
+        feed.announcements.truncate(MAX_NOTICES.saturating_sub(feed.app_renames.len()));
         for r in &feed.app_renames {
             feed.announcements.push(Notice {
                 id: format!("rename:{}:{}", r.old_name_lower, r.new_name_lower),
@@ -654,13 +655,21 @@ mod tests {
 
     #[test]
     fn rename_notices_count_toward_the_cap() {
-        for count in [MAX_NOTICES, 1000] {
-            let many: Vec<String> = (0..count).map(|i| format!(r#"{{"title": "News {i}", "body": "x"}}"#)).collect();
-            let full = sample().replace("\"announcements\": []", &format!("\"announcements\": [{}]", many.join(","))).replace(
-                "\"app_renames\": []",
-                r#""app_renames": [{"old_name": "PdfCraft", "old_name_lower": "pdfcraft", "new_name": "DocuCraft", "new_name_lower": "docucraft"}]"#,
-            );
-            assert_eq!(Feed::parse(&full).unwrap().announcements.len(), MAX_NOTICES, "{count} announcements");
+        let rename = |i: usize| {
+            format!(
+                r#"{{"old_name": "PdfCraft{i}", "old_name_lower": "pdfcraft{i}", "new_name": "DocuCraft{i}", "new_name_lower": "docucraft{i}",
+            "description": "Same app, new name.", "renamed_at": "2026-10-09T08:00:00Z"}}"#
+            )
+        };
+        for (news, renames) in [(MAX_NOTICES, 1), (1000, 1), (0, 30)] {
+            let many: Vec<String> = (0..news).map(|i| format!(r#"{{"title": "News {i}", "body": "x"}}"#)).collect();
+            let moved: Vec<String> = (0..renames).map(rename).collect();
+            let full = sample()
+                .replace("\"announcements\": []", &format!("\"announcements\": [{}]", many.join(",")))
+                .replace("\"app_renames\": []", &format!("\"app_renames\": [{}]", moved.join(",")));
+            let notices = Feed::parse(&full).unwrap().announcements;
+            assert_eq!(notices.len(), MAX_NOTICES, "{news} announcements, {renames} renames");
+            assert!(notices.iter().any(|n| n.title == "PdfCraft0 is now DocuCraft0"), "{news} announcements: the rename was cut");
         }
     }
 
