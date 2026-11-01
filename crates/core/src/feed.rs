@@ -90,7 +90,7 @@ pub struct Notice {
     pub id: String,
     pub title: String,
     pub body: String,
-    /// Only `https://` / `http://` links survive parsing.
+    /// Only `https://` links survive parsing.
     pub link: Option<String>,
     pub created_at: Option<i64>,
 }
