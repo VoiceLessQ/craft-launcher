@@ -681,7 +681,14 @@ mod tests {
 
     #[test]
     fn msi_entries_sort_newest_first_and_unversioned_last() {
+        use std::cmp::Ordering::{Equal, Greater, Less};
         let (old, new) = (version::parse("0.4.0"), version::parse("0.5.0"));
+        // Each arm by hand: the sort below never asks about None against Some in that order.
+        assert_eq!(newest_first(new.as_ref(), old.as_ref()), Less);
+        assert_eq!(newest_first(old.as_ref(), new.as_ref()), Greater);
+        assert_eq!(newest_first(new.as_ref(), None), Less);
+        assert_eq!(newest_first(None, new.as_ref()), Greater);
+        assert_eq!(newest_first(None, None), Equal);
         let mut versions = vec![None, old.clone(), new.clone(), None];
         versions.sort_by(|a, b| newest_first(a.as_ref(), b.as_ref()));
         assert_eq!(versions, vec![new, old, None, None]);
