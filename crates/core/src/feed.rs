@@ -630,7 +630,8 @@ mod tests {
             {"title": "Bad link", "body": "x", "maybe_web_link": "javascript:alert(1)"},
             {"title": "Shell link", "body": "x", "maybe_web_link": "https://getartcraft.com/a|calc.exe"},
             {"title": "Plain http", "body": "x", "maybe_web_link": "http://getartcraft.com/security"},
-            {"title": "User-info", "body": "x", "maybe_web_link": "https://getartcraft.com@evil.example/"}]"#,
+            {"title": "User-info", "body": "x", "maybe_web_link": "https://getartcraft.com@evil.example/"},
+            {"title": "File link", "body": "x", "maybe_web_link": "file:///etc/passwd"}]"#,
             )
             .replace(
                 "\"app_renames\": []",
@@ -638,12 +639,13 @@ mod tests {
             "new_name_lower": "docucraft", "description": "Same app, new name.", "renamed_at": "2026-10-09T08:00:00Z"}]"#,
             );
         let feed = Feed::parse(&with_notices).unwrap();
-        assert_eq!(feed.alerts.len(), 5);
+        assert_eq!(feed.alerts.len(), 6);
         assert_eq!(feed.alerts[0].link.as_deref(), Some("https://getartcraft.com/security"));
         assert_eq!(feed.alerts[1].link, None, "only web links are kept");
         assert_eq!(feed.alerts[2].link, None, "a link with shell metacharacters is dropped");
         assert_eq!(feed.alerts[3].link, None, "plain http is dropped");
         assert_eq!(feed.alerts[4].link, None, "a link with user-info is dropped");
+        assert_eq!(feed.alerts[5].link, None, "a file link is dropped");
         let titles: Vec<&str> = feed.announcements.iter().map(|n| n.title.as_str()).collect();
         assert_eq!(titles, ["New: CADCraft 1.0", "PdfCraft is now DocuCraft"]);
         // Ids are stable across parses, so dismissals stick.
@@ -652,12 +654,14 @@ mod tests {
 
     #[test]
     fn rename_notices_count_toward_the_cap() {
-        let many: Vec<String> = (0..MAX_NOTICES).map(|i| format!(r#"{{"title": "News {i}", "body": "x"}}"#)).collect();
-        let full = sample().replace("\"announcements\": []", &format!("\"announcements\": [{}]", many.join(","))).replace(
-            "\"app_renames\": []",
-            r#""app_renames": [{"old_name": "PdfCraft", "old_name_lower": "pdfcraft", "new_name": "DocuCraft", "new_name_lower": "docucraft"}]"#,
-        );
-        assert_eq!(Feed::parse(&full).unwrap().announcements.len(), MAX_NOTICES);
+        for count in [MAX_NOTICES, 1000] {
+            let many: Vec<String> = (0..count).map(|i| format!(r#"{{"title": "News {i}", "body": "x"}}"#)).collect();
+            let full = sample().replace("\"announcements\": []", &format!("\"announcements\": [{}]", many.join(","))).replace(
+                "\"app_renames\": []",
+                r#""app_renames": [{"old_name": "PdfCraft", "old_name_lower": "pdfcraft", "new_name": "DocuCraft", "new_name_lower": "docucraft"}]"#,
+            );
+            assert_eq!(Feed::parse(&full).unwrap().announcements.len(), MAX_NOTICES, "{count} announcements");
+        }
     }
 
     #[test]

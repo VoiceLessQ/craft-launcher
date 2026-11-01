@@ -554,6 +554,9 @@ mod tests {
             "nul.txt",
             "COM1.msi",
             "lpt9",
+            "prn",
+            "aux.log",
+            "a".repeat(201).as_str(),
         ] {
             assert!(!valid_file_name(bad), "{bad:?}");
         }
@@ -575,10 +578,15 @@ mod tests {
         for good in ["v0.6.0", "v1.0.0-beta.2", "nightly-2026-10-29", "v1+build.7"] {
             assert!(valid_tag(good), "{good:?}");
         }
-        for bad in ["", ".", "..", ".v1", "v1/x", "v1\\x", "v1\nx", "v1\u{202e}", "v 1", "v1?x", "v".repeat(65).as_str()] {
+        for bad in ["", ".", "..", ".v1", "v1/x", "v1\\x", "v1\nx", "v1\u{0}x", "v1\u{202e}", "v 1", "v1?x", "v".repeat(65).as_str()] {
             assert!(!valid_tag(bad), "{bad:?}");
         }
         let api = r#"{"tag_name": "v1\u202egpj", "html_url": "", "assets": []}"#;
         assert!(parse_github_release(api, REPO).is_err());
+        let prefix = download_prefix(REPO);
+        assert!(download_url_under(&format!("{prefix}v1/a.dmg"), &prefix));
+        assert!(!download_url_under(&format!("{prefix}v1\u{202e}/a.dmg"), &prefix), "an odd tag in a download link");
+        assert!(!download_url_under(&format!("{prefix}v1/a\u{202e}.dmg"), &prefix), "an odd name in a download link");
+        assert_eq!(tag_from_redirect(&format!("https://github.com/{REPO}/releases/tag/v1\u{202e}"), REPO), None);
     }
 }
