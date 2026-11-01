@@ -439,13 +439,7 @@ impl NativeBackend {
                 None => Err("secure connections aren't available on this system".into()),
             };
             drop(job);
-            match result {
-                Ok(()) => shared.emit(Event::LauncherRestarting),
-                Err(e) => {
-                    shared.restarting.store(false, Ordering::SeqCst);
-                    shared.emit(Event::JobFinished { app: LAUNCHER_ID.to_string(), result: Err(e) });
-                }
-            }
+            report_self_update(&shared, result);
         });
     }
 
@@ -630,6 +624,17 @@ fn landed_despite(error: &str, before: Option<&Installed>, after: Option<&Instal
 fn landed(before: Option<&Installed>, after: Option<&Installed>, latest: &version::Version) -> bool {
     let has_latest = |copy: Option<&Installed>| copy.and_then(|i| i.version.as_ref()).is_some_and(|v| !version::is_update(latest, v));
     has_latest(after) && !has_latest(before)
+}
+
+/// Says how the launcher's own update ended. A failed one gives back the restart it claimed.
+fn report_self_update(shared: &Shared, result: Result<(), String>) {
+    match result {
+        Ok(()) => shared.emit(Event::LauncherRestarting),
+        Err(e) => {
+            shared.restarting.store(false, Ordering::SeqCst);
+            shared.emit(Event::JobFinished { app: LAUNCHER_ID.to_string(), result: Err(e) });
+        }
+    }
 }
 
 /// For the launcher's own update, before it replaces itself: waits (saying so through `waiting`)
@@ -2009,6 +2014,19 @@ mod tests {
     }
 
     #[test]
+    fn a_failed_launcher_update_gives_back_the_restart_it_claimed() {
+        let shared = shared();
+        shared.restarting.store(true, Ordering::SeqCst);
+        report_self_update(&shared, Ok(()));
+        assert!(shared.restarting.load(Ordering::SeqCst), "the helper waits for this process to exit");
+        // The swap or its helper can still fail after the claim.
+        report_self_update(&shared, Err("disk full".into()));
+        assert!(!shared.restarting.load(Ordering::SeqCst));
+        let events = shared.events.lock().unwrap();
+        assert!(matches!(&events[..], [Event::LauncherRestarting, Event::JobFinished { result: Err(_), .. }]), "{events:?}");
+    }
+
+    #[test]
     fn the_first_byte_count_goes_out_right_after_another_phase() {
         let count = |done| JobPhase::Downloading { done, total: 100 };
         let (now, mut last) = (Instant::now(), None);
@@ -2018,6 +2036,7 @@ mod tests {
         assert!(!phase_is_due(&count(2), &mut last, now + Duration::from_millis(49)), "too soon after the last count");
         assert!(phase_is_due(&JobPhase::Verifying, &mut last, now + Duration::from_millis(49)), "only counts are thinned");
         assert!(phase_is_due(&count(3), &mut last, now + Duration::from_millis(50)));
+        assert!(!phase_is_due(&count(4), &mut last, now + Duration::from_millis(60)), "too soon after that one");
         assert!(phase_is_due(&count(100), &mut last, now + Duration::from_millis(51)), "the finished count always goes out");
     }
 
