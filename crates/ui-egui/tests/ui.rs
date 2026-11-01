@@ -2769,12 +2769,28 @@ fn the_notes_card_follows_the_zoom_within_the_window() {
         h.key_press_modifiers(egui::Modifiers::COMMAND, egui::Key::Plus);
         h.run_steps(3);
     }
-    let window = h.ctx.content_rect();
-    assert!(window.contains_rect(h.get_by_label("Close").rect()), "Close left the window");
-    assert!(window.contains_rect(h.get_by_label("Open on GitHub").rect()), "the link left the window");
+    let in_window = |h: &Harness<'_, Option<LauncherUi>>| {
+        let window = h.ctx.content_rect();
+        for label in ["Close", "Open on GitHub"] {
+            assert!(window.contains_rect(h.get_by_label(label).rect()), "{label} left {window:?}");
+        }
+    };
+    in_window(&h);
+    // The launcher's smallest window.
+    let full = h.ctx.content_rect().size();
+    h.set_size(egui::vec2(720.0, 500.0));
+    h.run_steps(3);
+    in_window(&h);
+    h.set_size(full);
     h.key_press_modifiers(egui::Modifiers::COMMAND, egui::Key::Num0);
     h.run_steps(3);
     assert!((span(&h) - usual).abs() < 0.5, "reset left the card at {}, was {usual}", span(&h));
+    // Below 100% only the text shrinks.
+    for _ in 0..3 {
+        h.key_press_modifiers(egui::Modifiers::COMMAND, egui::Key::Minus);
+        h.run_steps(3);
+    }
+    assert!((span(&h) - usual).abs() < 0.5, "zooming out left the card at {}, was {usual}", span(&h));
 }
 
 #[test]
